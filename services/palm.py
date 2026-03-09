@@ -5,21 +5,27 @@ Downloads the model file on first run if not present.
 
 from pathlib import Path
 
+import requests
 import numpy as np
 import mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 from PIL import Image
 
+MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+)
 MODEL_PATH = Path(__file__).parent.parent / "hand_landmarker.task"
 
 
 def _ensure_model() -> str:
     if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"MediaPipe model not found at {MODEL_PATH}. "
-            "Run: curl -L 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task' -o hand_landmarker.task"
-        )
+        print("Downloading MediaPipe HandLandmarker model…")
+        r = requests.get(MODEL_URL, stream=True, timeout=60)
+        r.raise_for_status()
+        MODEL_PATH.write_bytes(r.content)
+        print("Model downloaded.")
     return str(MODEL_PATH)
 
 
