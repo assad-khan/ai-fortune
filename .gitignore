@@ -1,0 +1,28 @@
+# Environment
+.env
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# MediaPipe model (large binary, download separately)
+hand_landmarker.task
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
