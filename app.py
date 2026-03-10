@@ -1,9 +1,10 @@
 """
 AI Fortune-Telling Booth – Streamlit POC
-Madame Zara reads your palm via GPT-4o Vision and delivers your fortune
-through a HeyGen AI avatar video.
+Madame Zara reads your destiny using your name, date of birth, and palm scan,
+then delivers your fortune through a HeyGen AI avatar video.
 """
 
+import datetime
 import os
 import time
 
@@ -13,13 +14,12 @@ from openai import OpenAI
 from PIL import Image
 
 from services.palm import detect_palm
-from services.fortune import generate_fortune
+from services.fortune import generate_fortune, get_reading_context
 from services.heygen import (
     fetch_avatars,
     fetch_voices,
     create_video,
     get_video_status,
-    poll_until_ready,
 )
 
 # ─── Environment ──────────────────────────────────────────────────────────────
@@ -83,6 +83,43 @@ section[data-testid="stSidebar"] * { color: #c9a0dc !important; }
     margin-top: 18px;
 }
 
+/* Loading phase card */
+.phase-card {
+    background: rgba(74,32,112,0.2);
+    border: 1px solid #4a2070;
+    border-radius: 14px;
+    padding: 22px 28px;
+    text-align: center;
+    margin: 12px 0;
+}
+.phase-emoji {
+    font-size: 3.5em;
+    display: block;
+    margin-bottom: 10px;
+    animation: pulse 2s infinite;
+}
+.phase-msg {
+    font-size: 1.1em;
+    color: #c9a0dc;
+    font-style: italic;
+}
+@keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50%       { transform: scale(1.15); opacity: 0.75; }
+}
+
+/* Astro badge */
+.astro-badge {
+    display: inline-block;
+    background: rgba(108,52,131,0.3);
+    border: 1px solid #6c3483;
+    border-radius: 20px;
+    padding: 4px 16px;
+    font-size: 0.9em;
+    color: #d4a8ff;
+    margin: 4px;
+}
+
 /* Buttons */
 .stButton > button {
     background: linear-gradient(135deg, #6c3483, #8e44ad) !important;
@@ -103,6 +140,14 @@ section[data-testid="stSidebar"] * { color: #c9a0dc !important; }
 /* Progress bar */
 .stProgress > div > div { background-color: #9b59b6 !important; }
 
+/* Inputs */
+.stTextInput input, .stDateInput input {
+    background: rgba(26,10,46,0.8) !important;
+    border: 1px solid #6c3483 !important;
+    color: #e8d5f5 !important;
+    border-radius: 8px !important;
+}
+
 /* Divider */
 hr { border-color: #4a2070 !important; }
 
@@ -113,10 +158,12 @@ div[data-testid="stAlert"] { border-radius: 10px; }
 
 # ─── Session state defaults ────────────────────────────────────────────────────
 _defaults = {
-    "stage": "welcome",          # welcome | scan | generating | reveal
+    "stage": "welcome",      # welcome | input | scan | generating | reveal
     "avatar_id": None,
     "voice_id": None,
-    "captured_image": None,      # PIL Image
+    "name": "",
+    "dob": None,             # datetime.date
+    "captured_image": None,  # PIL Image (not sent to AI — theatrical only)
     "fortune_text": "",
     "video_url": "",
 }
@@ -147,7 +194,6 @@ with st.sidebar:
     st.caption("Set the avatar and voice for the booth.")
     st.markdown("---")
 
-    # Avatars
     with st.spinner("Loading avatars…"):
         avatars = _fetch_avatars(HEYGEN_KEY)
 
@@ -157,7 +203,6 @@ with st.sidebar:
             for a in avatars
         ]
         avatar_ids = [a["avatar_id"] for a in avatars]
-        # Default to Abigail (confirmed working); fall back to index 0
         _default_avatar = "Abigail_expressive_2024112501"
         _default_avatar_idx = avatar_ids.index(_default_avatar) if _default_avatar in avatar_ids else 0
         chosen_idx = st.selectbox(
@@ -176,7 +221,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Voices
     with st.spinner("Loading voices…"):
         voices = _fetch_voices(HEYGEN_KEY)
 
@@ -186,7 +230,6 @@ with st.sidebar:
             for v in voices
         ]
         voice_ids = [v["voice_id"] for v in voices]
-        # Default to Amy (confirmed working); fall back to index 0
         _default_voice = "M2WosQ2Ju3f2b7jdddsj"
         _default_voice_idx = voice_ids.index(_default_voice) if _default_voice in voice_ids else 0
         voice_idx = st.selectbox(
@@ -228,8 +271,47 @@ def show_welcome():
             if not st.session_state.avatar_id or not st.session_state.voice_id:
                 st.error("Please select an avatar and voice in the sidebar first.")
             else:
+                st.session_state.stage = "input"
+                st.rerun()
+
+
+# ── Input: Name & Date of Birth ───────────────────────────────────────────────
+def show_input():
+    _header("🌟 Tell Me Who You Are", "The stars need your name and birth date to align")
+
+    st.markdown("""
+    <div style="text-align:center; color:#a678c8; padding:10px 0 20px; font-size:1em;">
+        <em>Every destiny is unique. Share your details and let the cosmos speak…</em>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col2:
+        name = st.text_input("✦  Your Full Name", placeholder="e.g. Sofia Khalil")
+        dob = st.date_input(
+            "✦  Date of Birth",
+            value=datetime.date(1990, 1, 1),
+            min_value=datetime.date(1900, 1, 1),
+            max_value=datetime.date.today(),
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if st.button("🔮  Continue to Palm Scan"):
+            if not name.strip():
+                st.error("Please enter your name.")
+            else:
+                st.session_state.name = name.strip()
+                st.session_state.dob = dob
                 st.session_state.stage = "scan"
                 st.rerun()
+
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("← Back"):
+            st.session_state.stage = "welcome"
+            st.rerun()
 
 
 # ── Palm Scan ────────────────────────────────────────────────────────────────
@@ -248,7 +330,7 @@ def show_scan():
 
         if detected:
             st.success("✅ Palm detected! The oracle is awakening…")
-            st.session_state.captured_image = image
+            st.session_state.captured_image = image  # stored but not sent to AI
             st.session_state.stage = "generating"
             time.sleep(0.8)
             st.rerun()
@@ -259,48 +341,96 @@ def show_scan():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if st.button("← Back"):
-            st.session_state.stage = "welcome"
+            st.session_state.stage = "input"
             st.rerun()
 
 
 # ── Generating ───────────────────────────────────────────────────────────────
 def show_generating():
-    _header("🌙 The Oracle Speaks…", "Reading the ancient lines of your palm")
+    name = st.session_state.name or "Seeker"
+    dob: datetime.date | None = st.session_state.dob
 
-    image: Image.Image | None = st.session_state.captured_image
-    if image is None:
-        st.error("No palm image found. Please start over.")
+    if not dob:
+        st.error("Missing birth date. Please start over.")
         if st.button("Restart"):
             st.session_state.stage = "welcome"
             st.rerun()
         return
 
+    # Derive context for display (zodiac + life path)
+    ctx = get_reading_context(name, dob)
+    first_name = name.split()[0]
+
+    _header("🌙 The Oracle Speaks…", f"Consulting the cosmic blueprint of {first_name}")
+
+    # Show astro badges immediately
+    st.markdown(
+        f"""
+        <div style="text-align:center; margin-bottom:16px;">
+            <span class="astro-badge">♈ {ctx['zodiac']}</span>
+            <span class="astro-badge">🔢 Life Path {ctx['life_path']}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     progress = st.progress(0)
-    status_box = st.empty()
+    phase_box = st.empty()
+    teaser_box = st.empty()
+
+    # Loading phases shown while HeyGen renders
+    phases = [
+        ("🔮", f"Consulting the ancient star charts for {first_name}…"),
+        ("🌙", f"Your Life Path {ctx['life_path']} reveals hidden truths…"),
+        ("✨", f"The {ctx['zodiac']} alignment is powerful today…"),
+        ("🎴", "The oracle is weaving your destiny into words…"),
+        ("🌟", "Madame Zara is preparing your message…"),
+        ("🎭", "Almost ready… the vision is taking shape…"),
+    ]
+
+    def _show_phase(idx: int):
+        emoji, msg = phases[idx % len(phases)]
+        phase_box.markdown(
+            f"""
+            <div class="phase-card">
+                <span class="phase-emoji">{emoji}</span>
+                <div class="phase-msg">{msg}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     try:
         # ── Step 1: Generate fortune text ─────────────────────────────────
-        status_box.markdown("🔮 *Reading your life line, heart line, fate line…*")
-        fortune = generate_fortune(image, openai_client)
+        _show_phase(0)
+        fortune = generate_fortune(name, dob, openai_client)
         st.session_state.fortune_text = fortune
         progress.progress(30)
 
+        # Show fortune text teaser immediately — fills wait time
+        teaser_box.markdown(
+            f'<div class="fortune-card" style="opacity:0.85;">"{fortune}"</div>',
+            unsafe_allow_html=True,
+        )
+
         # ── Step 2: Submit video to HeyGen ────────────────────────────────
-        status_box.markdown("🎭 *Awakening the oracle avatar…*")
+        _show_phase(1)
         video_id = create_video(
             HEYGEN_KEY,
             st.session_state.avatar_id,
             st.session_state.voice_id,
             fortune,
         )
-        progress.progress(50)
+        progress.progress(45)
 
-        # ── Step 3: Poll with live progress bar ───────────────────────────
-        status_box.markdown("✨ *Weaving the vision together… (30–90 s)*")
+        # ── Step 3: Poll — cycle through phases to keep user engaged ──────
         deadline = time.time() + 480  # 8 minutes
-        poll_pct = 50
+        poll_count = 0
+        poll_pct = 45
+
         while time.time() < deadline:
             time.sleep(5)
+            poll_count += 1
             d = get_video_status(HEYGEN_KEY, video_id)
             vid_status = d.get("status")
 
@@ -314,14 +444,22 @@ def show_generating():
             if vid_status == "failed":
                 raise RuntimeError(f"Rendering failed: {d.get('error', 'unknown')}")
 
-            # Nudge progress bar forward while waiting
-            poll_pct = min(poll_pct + 3, 93)
+            # Rotate phase message every 2 polls (~10s each)
+            phase_idx = 2 + (poll_count // 2)
+            _show_phase(phase_idx)
+
+            # Nudge progress bar
+            poll_pct = min(poll_pct + 2, 93)
             progress.progress(poll_pct)
         else:
-            raise RuntimeError("Video generation timed out after 5 minutes.")
+            raise RuntimeError("Video generation timed out.")
 
         progress.progress(100)
-        status_box.markdown("🌟 *Your destiny has been revealed!*")
+        phase_box.markdown(
+            '<div class="phase-card"><span class="phase-emoji">🌟</span>'
+            '<div class="phase-msg">Your destiny has been revealed!</div></div>',
+            unsafe_allow_html=True,
+        )
         time.sleep(1)
 
         st.session_state.stage = "reveal"
@@ -329,7 +467,8 @@ def show_generating():
 
     except Exception as exc:
         progress.empty()
-        status_box.empty()
+        phase_box.empty()
+        teaser_box.empty()
         st.error(f"The crystal ball has gone dark: {exc}")
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
@@ -340,7 +479,8 @@ def show_generating():
 
 # ── Reveal ───────────────────────────────────────────────────────────────────
 def show_reveal():
-    _header("🌟 Your Fortune", "Madame Zara has spoken")
+    name = st.session_state.name or "Seeker"
+    _header("🌟 Your Fortune", f"Madame Zara has spoken, {name.split()[0]}")
 
     if st.session_state.video_url:
         st.video(st.session_state.video_url)
@@ -356,8 +496,9 @@ def show_reveal():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if st.button("🔮  Read Another Fortune"):
-            st.session_state.fortune_text = ""
-            st.session_state.video_url = ""
+            for k in ("fortune_text", "video_url", "name"):
+                st.session_state[k] = ""
+            st.session_state.dob = None
             st.session_state.captured_image = None
             st.session_state.stage = "welcome"
             st.rerun()
@@ -365,8 +506,9 @@ def show_reveal():
 
 # ─── Router ───────────────────────────────────────────────────────────────────
 {
-    "welcome": show_welcome,
-    "scan": show_scan,
+    "welcome":    show_welcome,
+    "input":      show_input,
+    "scan":       show_scan,
     "generating": show_generating,
-    "reveal": show_reveal,
+    "reveal":     show_reveal,
 }.get(st.session_state.stage, show_welcome)()
